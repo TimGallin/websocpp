@@ -1,6 +1,12 @@
 # Prerequisites
 *.d
 
+#VS Project files
+*.sln
+*.sdf
+*.opensdf
+*.suo
+
 # Compiled Object files
 *.slo
 *.lo
