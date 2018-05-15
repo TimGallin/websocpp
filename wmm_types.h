@@ -5,14 +5,17 @@
 #include <string>
 #include <stdint.h>
 
-#ifdef WIN
+#ifdef WIN32
 #define INVALID_SOCKETMM INVALID_SOCKET
-#else ifdef LINUX
+#define SPRINTFMM sprintf_s
+#else
 #define INVALID_SOCKETMM -1
+#define SPRINTFMM snprintf
 #endif
 
 namespace websoc_types
 {
+    
 typedef struct uriparts_
 {
     std::string scheme;

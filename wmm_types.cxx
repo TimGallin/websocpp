@@ -18,29 +18,27 @@ namespace websoc_types
         }state = sw_scheme;
 
         std::string::const_iterator ite = uri.cbegin();
-
+		int m = 0;
         for(ite; ite != uri.cend(); ++ite){
             char ch = *ite;
-
             switch(state){
                 case sw_scheme:
-                    if(STRCMP_3((char*)&ch, ':', '/','/') == 0)
-                        state = sw_host;
-                        ite += 2;
-                        break;
-                    
+					if (STRCMP_3(ite, ':', '/', '/')){
+						state = sw_host;
+						ite += 2;
+						break;
+					}
+                        
                     parts.scheme.append(1,ch);
                     break;
                 
                 case sw_host:
                     if(ch == ':'){
                         state = sw_port;
-                        ++ite;
                         break;
                     }
                     else if(ch == '?'){
                         state = sw_query;
-                        ++ite;
                         break;
                     }
                     else if(ch == '/'){
@@ -55,7 +53,6 @@ namespace websoc_types
                 case sw_port:
                     if(ch == '?'){
                         state = sw_query;
-                        ++ite;
                         break;
                     }
                     else if(ch == '/'){
@@ -70,7 +67,6 @@ namespace websoc_types
                 case sw_path:
                     if(ch == '?'){
                         state = sw_query;
-                        ++ite;
                         break;
                     }
 

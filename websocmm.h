@@ -20,9 +20,9 @@
 #pragma warning(disable:4482)
 
 
-//#pragma comment(lib, "Ws2_32.lib")
-//#pragma comment(lib,"libeay32.lib")
-//#pragma comment(lib,"ssleay32.lib")
+#pragma comment(lib, "Ws2_32.lib")
+#pragma comment(lib,"libeay32.lib")
+#pragma comment(lib,"ssleay32.lib")
 
 #ifdef OPENSSL_USE
 #define SocWrite SSL_write
@@ -44,13 +44,6 @@ namespace WebsocMMM{
 		WebsocMM();
 		virtual ~WebsocMM();
 
-
-
-		/*
-		set uri
-		*/
-		bool SetUri(const std::string& uri);
-
 		/*
 		Run
 		*/
@@ -66,24 +59,12 @@ namespace WebsocMMM{
 		*/
 		bool Init(const std::string& uri);
 
-		/*
-		send ping frame.
-		*/
-		void SendPing();
 
-		/*
-		send pong frame.
-		*/
-		void SendPong();
+		virtual void OnMessage(std::vector<uint8_t>& sMessage) {};
 
+		virtual void OnClose(){};
 
-
-
-		virtual void OnMessage(std::vector<uint8_t>& sMessage) = 0;
-
-		virtual void OnClose() = 0;
-
-		virtual void OnError(int code, const std::string& message) = 0;
+		virtual void OnError(int code, const std::string& message){};
 
 	private:
 		bool connect();
@@ -93,12 +74,12 @@ namespace WebsocMMM{
 		@param rxbuf : received data buffer
 		@param p : size of valid data in buffer 
 		*/
-		bool recv_parse_handle(const std::vector<uint8_t>& rxbuf, int& vsize);
+		bool recv_parse_handle(const std::vector<uint8_t>& rxbuf, int vsize);
 
 		/*
 		send data,
 		*/
-		bool sendData(wsheader_type::opcode_type type, uint64_t message_size, std::string::iterator message_begin, std::string::iterator message_end);
+		//bool sendData(websoc_types::wmm_headers::opcode_type type, uint64_t message_size, std::string::iterator message_begin, std::string::iterator message_end);
 
 		/*
 		release inner vector buffer
@@ -122,7 +103,6 @@ namespace WebsocMMM{
 
 		std::vector<uint8_t> _rxbuf;//read buf
 		std::vector<uint8_t> _txbuf;//write buf
-		std::vector<uint8_t> _receivedData;
 
 		bool _usemask;
 
