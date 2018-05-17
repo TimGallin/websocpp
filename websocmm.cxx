@@ -30,7 +30,7 @@ namespace WebsocMMM{
 		WSADATA _wsaData;
 		rc = WSAStartup(MAKEWORD(2, 2), &_wsaData);
 		if (rc) {
-			OnError(WSAGetLastError(), "Initial WSAStartup failed!");
+			OnError(SOCKET_ERROR, "Initial WSAStartup failed!");
 			return false;
 		}
 
@@ -41,8 +41,8 @@ namespace WebsocMMM{
 			ERR_load_crypto_strings();
 
 			SSL_library_init();    
-			_sslmeth = SSLv23_client_method();
-			_sslctx = SSL_CTX_new(_sslmeth);
+			const SSL_METHOD* sslmeth = SSLv23_client_method();
+			_sslctx = SSL_CTX_new(sslmeth);
 			if (!_sslctx){
 				OnError(ERR_get_error(), "Initial SSL_CTX_new failed!");
 				return false;
@@ -68,13 +68,15 @@ namespace WebsocMMM{
 		ERR_free_strings();
 		EVP_cleanup();
 		CRYPTO_cleanup_all_ex_data();
-	
+		
 		if (_ssl){
 			SSL_shutdown(_ssl);
 			SSL_free(_ssl);
 			_ssl = nullptr;
 		}
-		if (_sslctx){ SSL_CTX_free(_sslctx); }
+		if (_sslctx){ 
+			SSL_CTX_free(_sslctx);
+		}
 
 		WSACleanup();
 	}
@@ -95,7 +97,8 @@ namespace WebsocMMM{
 			vsize += r;
 			if (_secure && SSL_get_error(_ssl, r) == SSL_ERROR_WANT_READ) {
 				continue;
-			}else if(r==0 && WSAGetLastError() == WSA_IO_PENDING){
+			}
+			else if (r == 0 && SOCKET_ERROR == SOCKET_IOPENDING){
 				continue;
 			}
 
@@ -140,7 +143,7 @@ namespace WebsocMMM{
 		hints.ai_socktype = SOCK_STREAM;
 
 		if ((ret = getaddrinfo(_urlparts.host.c_str(), _urlparts.port.c_str(), &hints, &result)) != 0){
-			OnError(WSAGetLastError(), "Getaddrinfo failed!");
+			OnError(SOCKET_ERROR, "Getaddrinfo failed!");
 			return false;
 		}
 		for (p = result; p != nullptr; p = p->ai_next)
@@ -150,7 +153,7 @@ namespace WebsocMMM{
 			if (::connect(_socketmm, p->ai_addr, p->ai_addrlen) != SOCKET_ERROR) {
 				break;
 			}
-			OnError(WSAGetLastError(), "WSA connect failed!");
+			OnError(SOCKET_ERROR, "WSA connect failed!");
 		}
 		freeaddrinfo(result);
 
@@ -187,8 +190,8 @@ namespace WebsocMMM{
 		SPRINTFMM(line, 256, "HTTP/1.1 101 WebSocket Protocol Handshake\r\n"); RawSend(line, strlen(line));
 		SPRINTFMM(line, 256, "Upgrade: WebSocket\r\n"); RawSend(line, strlen(line));
 		SPRINTFMM(line, 256, "Connection: Upgrade\r\n"); RawSend(line, strlen(line));
-		SPRINTFMM(line, 256, "Sec-WebSocket-Version: 13\r\n"); RawSend(line, strlen(line));
-		SPRINTFMM(line, 256, "Sec-WebSocket-Key: x3JJHMbDL1EzLkh9GBhXDw==\r\n"); RawSend(line, strlen(line));
+		//SPRINTFMM(line, 256, "Sec-WebSocket-Version: 13\r\n"); RawSend(line, strlen(line));
+		//SPRINTFMM(line, 256, "Sec-WebSocket-Key: x3JJHMbDL1EzLkh9GBhXDw==\r\n"); RawSend(line, strlen(line));
 		if (_urlparts.port == "80") {
 			SPRINTFMM(line, 256, "Host: %s\r\n", _urlparts.host.c_str()); RawSend(line, strlen(line));
 		}
@@ -196,14 +199,13 @@ namespace WebsocMMM{
 			SPRINTFMM(line, 256, "Host: %s:%s\r\n", _urlparts.host.c_str(), _urlparts.port.c_str()); RawSend(line, strlen(line));
 		}
 		SPRINTFMM(line, 256, "Pragma: no-cache\r\n"); RawSend(line, strlen(line));
-		SPRINTFMM(line, 256, "Sec-WebSocket-Protocol:\r\n\r\n"); RawSend(line, strlen(line));
+		//SPRINTFMM(line, 256, "Sec-WebSocket-Protocol:\r\n\r\n"); RawSend(line, strlen(line));
 
 		memset(line, 0, 256);
 		for (i = 0; i < 2 || (i < 255 && line[i - 2] != '\r' && line[i - 1] != '\n'); ++i) {
 			int sslread = SSL_read(_ssl, line + i, 1);
 
 			if (sslread <= 0) {
-				//OnError(SSL_get_error(_ssl, sslconnect), "ssl_read failed!");
 				return false;
 			}
 		}

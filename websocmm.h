@@ -3,36 +3,17 @@
 // https://github.com/dhbaird/easywsclient
 //
 
-#include <WinSock2.h>
-#include <WS2tcpip.h>
 #include <string>
 #include <vector>
 #include <stdint.h>
 
+#include "wmm_types.h"
 
 #include <openssl\ssl.h>
 #include <openssl\err.h>
 #include <openssl\bio.h>
-
-#include "wmm_types.h"
-
 #pragma warning(disable:4290)
 #pragma warning(disable:4482)
-
-
-#pragma comment(lib, "Ws2_32.lib")
-#pragma comment(lib,"libeay32.lib")
-#pragma comment(lib,"ssleay32.lib")
-
-#ifdef OPENSSL_USE
-#define SocWrite SSL_write
-#define SocRead SSL_read
-#else
-#define SocRead SSL_READ
-#endif
-
-#define SOCKET_EAGAIN_EINPROGRESS WSAEINPROGRESS
-#define SOCKET_EWOULDBLOCK WSAEWOULDBLOCK
 
 
 
@@ -60,11 +41,11 @@ namespace WebsocMMM{
 		bool Init(const std::string& uri);
 
 
-		virtual void OnMessage(std::vector<uint8_t>& sMessage) {};
+		virtual void OnMessage(std::vector<uint8_t>& sMessage) = 0;
 
-		virtual void OnClose(){};
+		virtual void OnClose() = 0;
 
-		virtual void OnError(int code, const std::string& message){};
+		virtual void OnError(int code, const std::string& message) = 0;
 
 	private:
 		bool connect();
@@ -99,8 +80,6 @@ namespace WebsocMMM{
 		//variables
 		websoc_types::urlparts _urlparts;
 
-		volatile int _nHbControl;  
-
 		std::vector<uint8_t> _rxbuf;//read buf
 		std::vector<uint8_t> _txbuf;//write buf
 
@@ -113,7 +92,6 @@ namespace WebsocMMM{
 		//Win
 		int _socketmm;
 		/*openssl variables*/
-		const SSL_METHOD* _sslmeth;
 		SSL_CTX* _sslctx;
 		SSL* _ssl;
 

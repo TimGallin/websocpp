@@ -2,15 +2,28 @@
 #define WEBSOCMM_HEADER_URI_H
 #pragma once
 
+#include <stdio.h>
 #include <string>
 #include <stdint.h>
 
-#ifdef WIN32
+#ifdef _WIN32
+#include <WinSock2.h>
+#include <WS2tcpip.h>
+#pragma comment(lib, "Ws2_32.lib")
+
 #define INVALID_SOCKETMM INVALID_SOCKET
 #define SPRINTFMM sprintf_s
+#define SOCKET_EAGAIN_EINPROGRESS WSAEINPROGRESS
+#define SOCKET_EWOULDBLOCK WSAEWOULDBLOCK
+#define SOCKET_IOPENDING WSA_IO_PENDING
+#define SOCKET_ERROR errno
+
 #else
 #define INVALID_SOCKETMM -1
 #define SPRINTFMM snprintf
+#define SOCKET_EAGAIN_EINPROGRESS EAGAIN
+#define SOCKET_EWOULDBLOCK EWOULDBLOCK
+#define SOCKET_ERROR WSAGetLastError()
 #endif
 
 namespace websoc_types
