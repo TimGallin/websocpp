@@ -1,12 +1,13 @@
 #include "wmm_types.h"
 
+#define STRCMP_2(x,y1,y2)  \
+    (x[0]==y1 && x[1]==y2)
 
 #define STRCMP_3(x,y1,y2,y3)  \
     (x[0]==y1 && x[1]==y2 && x[2]==y3)
 
 namespace websoc_types
 {
-    /*URI = "ws:" "//" host [ ":" port ] path [ "?" query ]*/
     bool websoc_uri_parse(const std::string &uri, urlparts &parts){
         enum {
             sw_scheme = 0,
@@ -18,7 +19,7 @@ namespace websoc_types
         }state = sw_scheme;
 
         std::string::const_iterator ite = uri.cbegin();
-		int m = 0;
+
         for(ite; ite != uri.cend(); ++ite){
             char ch = *ite;
             switch(state){
@@ -89,4 +90,32 @@ namespace websoc_types
 
         return true;
     }
+
+	bool parse_headers_respond(char* respond, int length, int& status, std::vector<std::string>& headers){
+		if (respond == nullptr){
+			return false;
+		}
+
+		status = 0;
+		char* pos = respond;
+		for (int i = 0; i < length; ++i){
+			if (STRCMP_2((respond + i), '\r', '\n')){
+				*(respond + i) = 0;
+
+				if (status == 0 && memcmp(pos, "HTTP", 4) == 0){
+						char* space = NULL;
+						space = strchr(pos, ' ');
+
+						if (space != NULL){
+							status = atoi(space + 1);
+						}
+				}
+
+				headers.emplace_back(pos);
+				pos = respond + i + 1;
+			}
+		}
+
+		return true;
+	}
 }

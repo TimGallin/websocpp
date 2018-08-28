@@ -2,14 +2,28 @@
 #include <process.h>
 #include <stdio.h>
 #include <sstream>
+#include <memory>
 
-#define DLF_MSGLEN 1024
+#define DLF_MSGLEN 2048
+
+#define STRCMP_4(x,y1,y2,y3,y4)  \
+    (x[0]==y1 && x[1]==y2 && x[2]==y3 && x[3]==y4)
+
+#define RECV_PARSE_ERROR -1
+#define RECV_PARSE_DONE 0
+#define RECV_PARSE_CONTINUE 1
+#define RECV_PARSE_CLOSE 2
+
 
 namespace WebsocMMM{
 
-	WebsocMM::WebsocMM():_secure(false),
-	_usemask(true),
-	_socketmm(INVALID_SOCKETMM){
+	WebsocMM::WebsocMM() :_secure(false),
+		_usemask(true),
+		_socketmm(INVALID_SOCKETMM),
+		_rxbuf(NULL),
+		_rxbuf_length(0),
+		_recv_data(NULL),
+		_recv_data_length(0){
 
 	}
 
@@ -17,122 +31,128 @@ namespace WebsocMMM{
 	}
 
 	bool WebsocMM::Init(const std::string& uri){
-		if(!websoc_types::websoc_uri_parse(uri, _urlparts)){
+		if (!websoc_types::websoc_uri_parse(uri, _urlparts)){
 			return false;
 		}
 
-		if(_urlparts.scheme == "wss"){
+		if (_urlparts.scheme == "wss"){
 			_secure = true;
 		}
 
-		/*init Win-WSA env*/
+		InitWssHeaders();
+
+		return InitSocket();
+	}
+
+	void WebsocMM::InitWssHeaders(){
+		char line[512];
+		memset(line, 0, 512);
+
+		if (_urlparts.query.empty()){
+			SSPRINTF(line, 256, "GET %s HTTP/1.1\r\n", _urlparts.path.c_str());
+		}
+		else{
+			SSPRINTF(line, 256, "GET %s?%s HTTP/1.1\r\n", _urlparts.path.c_str(), _urlparts.query.c_str());
+		}
+
+		_wss_headers.emplace_back(line);
+		memset(line, 0, 512);
+
+		//
+		_wss_headers.emplace_back("HTTP/1.1 101 WebSocket Protocol Handshake\r\n");
+		_wss_headers.emplace_back("Upgrade:WebSocket\r\n");
+		_wss_headers.emplace_back("Connection:Upgrade\r\n");
+		_wss_headers.emplace_back("Pragma:no-cache\r\n");
+
+		_wss_headers.emplace_back("Sec-WebSocket-Version: 13\r\n");
+		_wss_headers.emplace_back("Sec-WebSocket-Key: x3JJHMbDL1EzLkh9GBhXDw==\r\n");
+
+		//
+		if (_urlparts.port == "80") {
+			SSPRINTF(line, 256, "Host: %s\r\n", _urlparts.host.c_str());
+		}
+		else {
+			SSPRINTF(line, 256, "Host: %s:%s\r\n", _urlparts.host.c_str(), _urlparts.port.c_str());
+		}
+
+		_wss_headers.emplace_back(line);
+		memset(line, 0, 512);
+
+		//
+		_wss_headers.emplace_back("Sec-WebSocket-Protocol:\r\n\r\n");
+
+	}
+
+	bool WebsocMM::InitSocket(){
 		INT rc = 0;
 		WSADATA _wsaData;
 		rc = WSAStartup(MAKEWORD(2, 2), &_wsaData);
 		if (rc) {
-			OnError(SOCKET_ERROR, "Initial WSAStartup failed!");
+			OnError(SOCKETMM_LASTERROR, "Initial WSAStartup failed!");
 			return false;
 		}
 
-		if(_secure){
-			/*init openssl env*/
-			SSL_load_error_strings();    
-			ERR_load_ERR_strings();
-			ERR_load_crypto_strings();
 
-			SSL_library_init();    
-			const SSL_METHOD* sslmeth = SSLv23_client_method();
-			_sslctx = SSL_CTX_new(sslmeth);
-			if (!_sslctx){
-				OnError(ERR_get_error(), "Initial SSL_CTX_new failed!");
-				return false;
-			}
-
-			_ssl = SSL_new(_sslctx);
-			if (!_ssl){
-				OnError(ERR_get_error(), "Initial SSL_new failed!");
-				return false;
-			}
-			SSL_CTX_set_verify(_sslctx, SSL_VERIFY_NONE, nullptr);
-			SSL_set_verify(_ssl, SSL_VERIFY_NONE, nullptr);//set shakehands whatever the perr verify's result
+#ifdef WSS_SSL
+		if (_secure && !InitSSL()){
+			return false;
 		}
+#endif
 
 		return true;
 	}
 
-	/*release source*/
+#ifdef WSS_SSL
+	bool WebsocMM::InitSSL(){
+		//初始化OpenSSL
+		SSL_load_error_strings();
+		ERR_load_ERR_strings();
+		ERR_load_crypto_strings();
+
+		SSL_library_init();
+		const SSL_METHOD* sslmeth = SSLv23_client_method();
+		_sslctx = SSL_CTX_new(sslmeth);
+		if (!_sslctx){
+			OnError(ERR_get_error(), "Initial SSL_CTX_new failed!");
+			return false;
+		}
+
+		_ssl = SSL_new(_sslctx);
+		if (!_ssl){
+			OnError(ERR_get_error(), "Initial SSL_new failed!");
+			return false;
+		}
+
+		//默认不使用SSL验证
+		SSL_CTX_set_verify(_sslctx, SSL_VERIFY_NONE, nullptr);
+		SSL_set_verify(_ssl, SSL_VERIFY_NONE, nullptr);//set shakehands whatever the perr verify's result
+
+		return true;
+	}
+
 	void WebsocMM::ReleaseSSL(){
-		//clean ssl env
+		//释放SSL环境
 		SSL_COMP_free_compression_methods();
 		ERR_remove_state(0);
 		ERR_free_strings();
 		EVP_cleanup();
 		CRYPTO_cleanup_all_ex_data();
-		
+
 		if (_ssl){
 			SSL_shutdown(_ssl);
 			SSL_free(_ssl);
 			_ssl = nullptr;
 		}
-		if (_sslctx){ 
+		if (_sslctx){
 			SSL_CTX_free(_sslctx);
+			_sslctx = nullptr;
 		}
 
-		WSACleanup();
+
 	}
+#endif
 
-	void WebsocMM::Run(){
-		/*win socket variables*/
-		_socketmm = -1;
-
-		if(!connect()){
-			return;
-		}
-
-		int vsize = 0;
-		_rxbuf.resize(DLF_MSGLEN);
-
-		for(;;) {
-			int r = RawRead(&_rxbuf[0] + vsize, _rxbuf.size());
-			vsize += r;
-			if (_secure && SSL_get_error(_ssl, r) == SSL_ERROR_WANT_READ) {
-				continue;
-			}
-			else if (r == 0 && SOCKET_ERROR == SOCKET_IOPENDING){
-				continue;
-			}
-
-			if (r <= 0) {
-				OnError(r, "Peer connection closed!");
-				break;
-			}
-			else{
-				if (recv_parse_handle(_rxbuf, vsize)){
-					vsize = 0;
-					ClearBuffer();
-				}
-			}
-		}
-
-		if(_secure){
-			ReleaseSSL();
-		}
-
-		if(_socketmm != -1){
-			closesocket(_socketmm);
-		}
-		WSACleanup();
-	}
-
-	/*
-	release inner vector buffer
-	*/
-	void WebsocMM::ClearBuffer(){
-		std::vector<uint8_t>().swap(_rxbuf);// free memory
-		_rxbuf.resize(DLF_MSGLEN);
-	}
-
-	bool WebsocMM::connect(){
+	bool WebsocMM::Connect(){
 		struct addrinfo hints;
 		struct addrinfo *result;
 		struct addrinfo *p;
@@ -143,17 +163,24 @@ namespace WebsocMMM{
 		hints.ai_socktype = SOCK_STREAM;
 
 		if ((ret = getaddrinfo(_urlparts.host.c_str(), _urlparts.port.c_str(), &hints, &result)) != 0){
-			OnError(SOCKET_ERROR, "Getaddrinfo failed!");
+			OnError(SOCKETMM_LASTERROR, "Getaddrinfo failed!");
 			return false;
 		}
+
 		for (p = result; p != nullptr; p = p->ai_next)
 		{
 			_socketmm = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
-			if (_socketmm == INVALID_SOCKETMM) { continue; }
-			if (::connect(_socketmm, p->ai_addr, p->ai_addrlen) != SOCKET_ERROR) {
+			if (_socketmm == INVALID_SOCKETMM) {
+				continue;
+			}
+
+			if (::connect(_socketmm, p->ai_addr, p->ai_addrlen) != SOCKETMM_ERROR) {
 				break;
 			}
-			OnError(SOCKET_ERROR, "WSA connect failed!");
+			OnError(SOCKETMM_LASTERROR, "WSA connect failed!");
+
+			closesocket(_socketmm);
+			_socketmm = INVALID_SOCKET;
 		}
 		freeaddrinfo(result);
 
@@ -161,91 +188,165 @@ namespace WebsocMMM{
 			return false;
 		}
 
-		if(_secure){
+#ifdef WSS_SSL
+		if (_secure){
+
 			if (SSL_set_fd(_ssl, _socketmm) != 1){
 				OnError(ERR_get_error(), "SSL_set_fd failed!");
 				return false;
 			}
 
-			if(SSL_connect(_ssl) != 1){
+			if (SSL_connect(_ssl) != 1){
 				//OnError(SSL_get_error(_ssl, sslconnect), "SSL_connect failed!");
 				return false;
 			}
 		}
-
-		//---start handshake
-		int send = 0;
-		char errmsg[256] = { 0 };
-		// Send an initial buffer
-		char line[256];
-		int status = 0;
-		int i;
-		if (_urlparts.query.empty()){
-			SPRINTFMM(line, 256, "GET /%s HTTP/1.1\r\n", _urlparts.path.c_str());  send = RawSend(line, strlen(line));
-		}
-		else{
-			SPRINTFMM(line, 256, "GET /%s?%s HTTP/1.1\r\n", _urlparts.path.c_str(), _urlparts.query.c_str());  send = RawSend(line, strlen(line));
-		}
-		
-		SPRINTFMM(line, 256, "HTTP/1.1 101 WebSocket Protocol Handshake\r\n"); RawSend(line, strlen(line));
-		SPRINTFMM(line, 256, "Upgrade: WebSocket\r\n"); RawSend(line, strlen(line));
-		SPRINTFMM(line, 256, "Connection: Upgrade\r\n"); RawSend(line, strlen(line));
-		//SPRINTFMM(line, 256, "Sec-WebSocket-Version: 13\r\n"); RawSend(line, strlen(line));
-		//SPRINTFMM(line, 256, "Sec-WebSocket-Key: x3JJHMbDL1EzLkh9GBhXDw==\r\n"); RawSend(line, strlen(line));
-		if (_urlparts.port == "80") {
-			SPRINTFMM(line, 256, "Host: %s\r\n", _urlparts.host.c_str()); RawSend(line, strlen(line));
-		}
-		else {
-			SPRINTFMM(line, 256, "Host: %s:%s\r\n", _urlparts.host.c_str(), _urlparts.port.c_str()); RawSend(line, strlen(line));
-		}
-		SPRINTFMM(line, 256, "Pragma: no-cache\r\n"); RawSend(line, strlen(line));
-		//SPRINTFMM(line, 256, "Sec-WebSocket-Protocol:\r\n\r\n"); RawSend(line, strlen(line));
-
-		memset(line, 0, 256);
-		for (i = 0; i < 2 || (i < 255 && line[i - 2] != '\r' && line[i - 1] != '\n'); ++i) {
-			int sslread = SSL_read(_ssl, line + i, 1);
-
-			if (sslread <= 0) {
-				return false;
-			}
-		}
-		line[i] = 0;
-		if (i == 255){
-			return false;
-		}
-
-		if (sscanf(line, "HTTP/1.1 %d", &status) != 1 || status != 101) {
-			return false;
-		}
-
-		while (true) {
-			memset(line, 0, 256);
-			for (i = 0; i < 2 || (i < 255 && line[i - 2] != '\r' && line[i - 1] != '\n'); ++i) {
-				int sslread = SSL_read(_ssl, line + i, 1);
-				if (sslread == 0) {
-					OnError(SSL_get_error(_ssl, sslread), "ssl_read failed!");
-					return false;
-				}
-			}
-			if (line[0] == '\r' && line[1] == '\n') { break; }
-		}
+#endif
 
 		return true;
 	}
 
-	bool WebsocMM::recv_parse_handle(const std::vector<uint8_t>& rxbuf, int vsize){
+	bool WebsocMM::ShakeHands(){
+		//发送握手请求
+		int s = 0;
+		for (const std::string& header : _wss_headers){
+#ifdef WSS_SSL
+			s = ::SSL_write(_ssl, header.c_str(), header.length());
+#else
+			s = send(_socketmm, header.c_str(), header.length(), 0);
+#endif
+		}
+
+		//等待服务器响应并读取返回
+		std::unique_ptr<char[]> rxbuf(new char[DLF_MSGLEN]());
+		int r = 0, length = 0;
+
+		while (1){
+#ifdef WSS_SSL
+			r = ::SSL_read(_ssl, rxbuf.get() + length, DLF_MSGLEN);
+#else
+			r = recv(_socketmm, rxbuf.get() + length, DLF_MSGLEN, 0);
+#endif
+
+			if (r <= 0) {
+				return false;
+			}
+
+			length += r;
+
+			if (length < 5){
+				continue;
+			}
+
+			if (STRCMP_4((rxbuf.get() + length - 4), '\r', '\n', '\r', '\n')){
+				break;
+			}
+
+			if (length == DLF_MSGLEN){
+				std::unique_ptr<char[]> newbuf(new char[2 * length]());
+				memcpy(newbuf.get(), rxbuf.get(), length);
+				rxbuf.swap(newbuf);
+				continue;
+			}
+		}
+
+		int status = 0;
+		_wss_headers.clear();
+		if (!websoc_types::parse_headers_respond(rxbuf.get(), length, status, _wss_headers)){
+			return false;
+		}
+
+		if (status != 200 && status != 101){
+			return false;
+		}
+
+		OnSetup(_wss_headers);
+
+		return true;
+	}
+
+	void WebsocMM::Run(){
+		if (!Connect()){
+			return;
+		}
+
+		if (!ShakeHands()){
+			return;
+		}
+
+		//当前_rxbuf有效的长度
+		unsigned int valid_size = 0;
+
+		_rxbuf = new unsigned char[DLF_MSGLEN]();
+		_rxbuf_length = DLF_MSGLEN;
+
+		for (;;) {
+#ifdef WSS_SSL
+			int r = 0;
+			if (_secure){
+				r = ::SSL_read(_ssl, (char*)_rxbuf + valid_size, _rxbuf_length - valid_size);
+
+				if (_secure && SSL_get_error(_ssl, r) == SSL_ERROR_WANT_READ) {
+					continue;
+				}
+			}
+			else
+			{
+				r = recv(_socketmm, (char*)_rxbuf + valid_size, _rxbuf_length - valid_size, 0);
+				if (r == 0 && SOCKETMM_LASTERROR == SOCKET_IOPENDING){
+					continue;
+				}
+			}
+#else
+			int r = recv(_socketmm, (char*)_rxbuf + valid_size, _rxbuf_length - valid_size, 0);
+			if (r == 0 && SOCKETMM_LASTERROR == SOCKET_IOPENDING){
+				continue;
+			}
+#endif
+
+			if (r <= 0) {
+				OnError(SOCKETMM_LASTERROR, "Peer connection closed!");
+				break;
+			}
+
+			valid_size += r;
+
+			int parse = RecvHandle(_rxbuf, valid_size);
+			if (parse == RECV_PARSE_DONE){
+				delete[] _rxbuf;
+				valid_size = 0;
+				
+				_rxbuf = new unsigned char[DLF_MSGLEN]();
+				_rxbuf_length = DLF_MSGLEN;
+			}
+			else if (parse == RECV_PARSE_CLOSE || parse == RECV_PARSE_ERROR){
+				break;
+			}
+		}
+
+		if (_rxbuf){
+			delete[] _rxbuf;
+			_rxbuf_length = 0;
+		}
+
+		ReleaseSocket();
+	}
+
+	int WebsocMM::RecvHandle(unsigned char* rxbuf, unsigned int& valid_size){
 		// TODO: consider acquiring a lock on rxbuf...
 		while (true) {
 			websoc_types::wmm_headers ws;
-			if (vsize < 2) { return false; /* Need at least 2 */ }
+			if (valid_size < 2) { return false; /* Need at least 2 */ }
 
-			const uint8_t * data = (uint8_t *)&_rxbuf[0]; // peek, but don't consume
+			const uint8_t * data = (uint8_t *)_rxbuf; // peek, but don't consume
 			ws.fin = (data[0] & 0x80) == 0x80;
 			ws.opcode = (websoc_types::wmm_headers::opcode_type) (data[0] & 0x0f);
 			ws.mask = (data[1] & 0x80) == 0x80;
 			ws.N0 = (data[1] & 0x7f);
 			ws.header_size = 2 + (ws.N0 == 126 ? 2 : 0) + (ws.N0 == 127 ? 8 : 0) + (ws.mask ? 4 : 0);
-			if (_rxbuf.size() < ws.header_size) { return false; /* Need: ws.header_size - rxbuf.size() */ }
+			if (valid_size < ws.header_size) {
+				return RECV_PARSE_CONTINUE; /* Need: ws.header_size - rxbuf.size() */ 
+			}
 
 			int i = 0;
 			if (ws.N0 < 126) {
@@ -283,14 +384,23 @@ namespace WebsocMMM{
 				ws.masking_key[3] = 0;
 			}
 
-			if (_rxbuf.size() < ws.header_size + ws.N) {
-				_rxbuf.resize((int)(ws.header_size + ws.N));
-				return false;
+			if (_rxbuf_length < ws.header_size + ws.N) {
+				//重新分配空间，将原有空间内有效的内容拷贝至新空间。 由于掩码的原因，这里不宜直接将Header舍弃
+				_rxbuf_length = ws.header_size + (unsigned int)ws.N;
+				unsigned char* tpbuf = new unsigned char[_rxbuf_length]();
+
+				memcpy(tpbuf, _rxbuf, valid_size);
+				delete[] _rxbuf;
+
+				_rxbuf = tpbuf;
+				tpbuf = NULL;
+
+				return RECV_PARSE_CONTINUE;
 				/* Need: ws.header_size+ws.N - rxbuf.size() */
 			}
 
-			if(vsize < ws.header_size + ws.N){
-				return false;
+			if (valid_size < ws.header_size + ws.N){
+				return RECV_PARSE_CONTINUE;
 			}
 
 			// We got a whole message, now do something with it:
@@ -299,67 +409,100 @@ namespace WebsocMMM{
 				|| ws.opcode == websoc_types::wmm_headers::CONTINUATION
 				) {
 				if (ws.mask) {
-					 for (size_t i = 0; i != ws.N; ++i) { 
-						 _rxbuf[i + ws.header_size] ^= ws.masking_key[i & 0x3]; 
-						} 
+					for (size_t i = 0; i != ws.N; ++i) {
+						_rxbuf[i + ws.header_size] ^= ws.masking_key[i & 0x3];
+					}
 				}
 
+				//重新分配recv_data buffer
+				unsigned char* tpbuf = new unsigned char[_recv_data_length + (unsigned int)ws.N]();
+
+				if (_recv_data_length > 0){
+					//将原有内容复制到新的recv缓冲区，释放原缓冲区，将recv_data指向新的buffer
+					memcpy(tpbuf, _recv_data, _recv_data_length);
+					delete[] _recv_data;
+				}
+
+				_recv_data = tpbuf;
+				
+				//将掩码处理后的内容主体追加到recv_data,更新_recv_data_length长度
+				memcpy(_recv_data + _recv_data_length, _rxbuf + ws.header_size, (unsigned int)ws.N);
+				_recv_data_length += (unsigned int)ws.N;
+				
+				//重置_rxbuf
+				memset(_rxbuf, 0, _rxbuf_length);
+				valid_size = 0;
+
 				if (ws.fin) {
-					OnMessage(_rxbuf);
+					OnMessage((char*)(_recv_data), _recv_data_length);
 				}
 				else{
-					OnError(3, "Receive unexpected FIN.Close socket.");
-					Close();
+					return RECV_PARSE_CONTINUE;
 				}
 			}
 			else if (ws.opcode == websoc_types::wmm_headers::PING) {
 
 			}
 			else if (ws.opcode == websoc_types::wmm_headers::PONG) {
-
+				return RECV_PARSE_CLOSE;
 			}
 			else if (ws.opcode == websoc_types::wmm_headers::CLOSE) {
 				OnClose();
 			}
 			else {
 				OnError(3, "ERROR: Got unexpected WebSocket message.Close socket.");
-				Close();
+				return RECV_PARSE_ERROR;
 			}
 
-			if (ws.header_size + (size_t)ws.N <= _rxbuf.size() && _rxbuf.begin() != _rxbuf.end()){
-				_rxbuf.erase(_rxbuf.begin(), _rxbuf.begin() + ws.header_size + (size_t)ws.N);
-			}
-			std::vector<uint8_t>().swap(_rxbuf);// free memory
 			break;
 		}
 
-		return true;
+		//清理recv_data buffer
+		if (_recv_data){
+			delete[] _recv_data;
+			_recv_data_length = 0;
+		}
+
+		return RECV_PARSE_DONE;
 	}
 
 	void WebsocMM::Close(){
-		// if (_readyState == CLOSING || _readyState == CLOSED) { return; }
-		// _readyState = CLOSING;
-		// uint8_t closeFrame[6] = { 0x88, 0x80, 0x00, 0x00, 0x00, 0x00 }; // last 4 bytes are a masking key
-		// std::vector<uint8_t> header(closeFrame, closeFrame + 6);
-		// _txbuf.insert(_txbuf.end(), header.begin(), header.end());
-		// int ret = 0;
-		// while (_txbuf.size()) {
-		// 	ret = ::SSL_write(_ssl, (char*)&_txbuf[0], _txbuf.size());
-		// 	if (ret > 0) {
-		// 		break;
-		// 	}
-		// 	else if (ret <= 0) {
-		// 		_readyState = CLOSED;
-		// 		//LOG(ERROR) << "Connection error! Connection closed!";
-		// 	}
+		 uint8_t closeFrame[6] = { 0x88, 0x80, 0x00, 0x00, 0x00, 0x00 }; // last 4 bytes are a masking key
+		 std::vector<uint8_t> header(closeFrame, closeFrame + 6);
+		 _txbuf.insert(_txbuf.end(), header.begin(), header.end());
+		 int ret = 0;
+		 while (_txbuf.size()) {
+		 	ret = ::SSL_write(_ssl, (char*)&_txbuf[0], _txbuf.size());
+		 	if (ret > 0) {
+		 		break;
+		 	}
+		 	else if (ret <= 0) {
+		 		//LOG(ERROR) << "Connection error! Connection closed!";
+		 	}
 
-		// }
-		// if (_txbuf.begin() != _txbuf.end() && ret <= (int)_txbuf.size()){
-		// 	_txbuf.erase(_txbuf.begin(), _txbuf.begin() + ret);
-		// }
-		// std::vector<uint8_t>().swap(_txbuf);// free memory
-		// _readyState = CLOSED;
+		 }
 
+		 if (_txbuf.begin() != _txbuf.end() && ret <= (int)_txbuf.size()){
+		 	_txbuf.erase(_txbuf.begin(), _txbuf.begin() + ret);
+		 }
+		 std::vector<uint8_t>().swap(_txbuf);// free memory
+	}
+
+	void WebsocMM::Exit(){
+		ReleaseSocket();
+	}
+
+	void WebsocMM::ReleaseSocket(){
+#ifdef WSS_SSL
+		if (_secure){
+			ReleaseSSL();
+		}
+#endif
+		WSACleanup();
+
+		if (_socketmm != INVALID_SOCKETMM){
+			closesocket(_socketmm);
+		}
 	}
 
 	// bool WebsocMM::sendData(wsheader_type::opcode_type type, uint64_t message_size, std::string::iterator message_begin, std::string::iterator message_end){
@@ -433,26 +576,4 @@ namespace WebsocMMM{
 	// 	return true;
 	// }
 
-
-	int WebsocMM::RawSend(const void* buffer, int num, int winflag){
-		int nSend = 0;
-		if(_secure){
-			nSend = ::SSL_write(_ssl, buffer, num);
-		}else{
-			nSend = send(_socketmm, (const char*)buffer, num, winflag);
-		}
-
-		return nSend;
-	}
-
-	int WebsocMM::RawRead(void* buffer, int num,int winflag){
-		int nSend = 0;
-		if(_secure){
-			nSend = ::SSL_read(_ssl, buffer, num);
-		}else{
-			nSend = recv(_socketmm, (char*)buffer, num, winflag);
-		}
-
-		return nSend;
-	}
 }
