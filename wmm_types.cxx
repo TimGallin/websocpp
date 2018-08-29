@@ -17,7 +17,7 @@ namespace websoc_types
             sw_path,
             sw_query
         }state = sw_scheme;
-
+		 
         std::string::const_iterator ite = uri.cbegin();
 
         for(ite; ite != uri.cend(); ++ite){

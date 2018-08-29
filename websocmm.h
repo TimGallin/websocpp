@@ -1,11 +1,9 @@
 #pragma once
-// refer to
-// https://github.com/dhbaird/easywsclient
-//
 
 #include <string>
 #include <vector>
 #include <stdint.h>
+#include <mutex>
 
 #include "wmm_types.h"
 
@@ -21,33 +19,65 @@
 
 
 namespace WebsocMMM{
+	//------------V-Base TikTok----------------------------------
+	class TikTok
+	{
+	public:
+		enum Status
+		{
+			PING,
+			PONG
+		};
+
+		//TikTok();
+		virtual ~TikTok(){};
+
+		virtual void Start() = 0;
+
+		virtual void Stop() = 0;
+
+		virtual void OnStatus(Status status) = 0;
+	};
+
+	//------------WebsocMM----------------------------------
 
 	class WebsocMM
 	{
 	public:
 		WebsocMM();
-		virtual ~WebsocMM();
+		virtual ~WebsocMM(){};
 
 		/*
 		Run
 		*/
-		void Run();
+		void WmmRun();
 
 		/*
 		发送Close消息到服务器
 		服务器在正常流程下将会回复Close消息，Client在接收到Close后将会退出
 		*/
-		void Close();
+		void WmmClose();
 
 		/*
 		关闭Socket
 		*/
-		void Exit();
+		void WmmExit();
 
 		/*
 		init wsa and openssl env.
 		*/
-		bool Init(const std::string& uri);
+		bool WmmInit(const std::string& uri);
+
+		/*
+		Send Data
+		*/
+		bool SendData(websoc_types::wmm_headers::opcode_type type, const char* message_begin, uint64_t message_size);
+
+
+		/*
+		Set Timer
+		*/
+		void TimerDelegate(TikTok* delegate);
 
 		//-----------------Interface-------------------
 		virtual void OnSetup(std::vector<std::string>& wssheaders) = 0;
@@ -103,39 +133,38 @@ namespace WebsocMMM{
 		*/
 		int RecvHandle(unsigned char* rxbuf, unsigned int& valid_size);
 
-		/*
-		send data,
-		*/
-		//bool sendData(websoc_types::wmm_headers::opcode_type type, uint64_t message_size, std::string::iterator message_begin, std::string::iterator message_end);
 
 		//variables
 		websoc_types::urlparts _urlparts;
 
-		//
+		//recv buffer
 		unsigned char* _rxbuf;
 		unsigned int _rxbuf_length;
 
+		//recv data buffer
 		unsigned char* _recv_data;
 		unsigned int _recv_data_length;
 
-		std::vector<uint8_t> _txbuf;//write buf
+		std::mutex _send_mutex;
+
+		TikTok* _tiktok_delegate;
 
 		bool _usemask;
 
+		//是否是 WSS
 		bool _secure;
-
-		struct addrinfo *addrResult, *ptr, hints;
 
 		//websocket 请求头部
 		std::vector<std::string> _wss_headers;
 
-		//Win
+		//Socket
 		int _socketmm;
 
 #ifdef WSS_SSL
-		/*openssl variables*/
+		//SSL
 		SSL_CTX* _sslctx;
 		SSL* _ssl;
 #endif
 	};
+
 }

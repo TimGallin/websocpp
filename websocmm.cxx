@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <sstream>
 #include <memory>
+#include <thread>
 
 #define DLF_MSGLEN 2048
 
@@ -16,6 +17,7 @@
 
 
 namespace WebsocMMM{
+	//----------------------------------------------
 
 	WebsocMM::WebsocMM() :_secure(false),
 		_usemask(true),
@@ -23,14 +25,16 @@ namespace WebsocMMM{
 		_rxbuf(NULL),
 		_rxbuf_length(0),
 		_recv_data(NULL),
-		_recv_data_length(0){
+		_recv_data_length(0),
+		_tiktok_delegate(NULL){
 
 	}
 
-	WebsocMM::~WebsocMM(){
+	void WebsocMM::TimerDelegate(TikTok* delegate){
+		_tiktok_delegate = delegate;
 	}
 
-	bool WebsocMM::Init(const std::string& uri){
+	bool WebsocMM::WmmInit(const std::string& uri){
 		if (!websoc_types::websoc_uri_parse(uri, _urlparts)){
 			return false;
 		}
@@ -92,7 +96,6 @@ namespace WebsocMMM{
 			return false;
 		}
 
-
 #ifdef WSS_SSL
 		if (_secure && !InitSSL()){
 			return false;
@@ -147,8 +150,6 @@ namespace WebsocMMM{
 			SSL_CTX_free(_sslctx);
 			_sslctx = nullptr;
 		}
-
-
 	}
 #endif
 
@@ -265,13 +266,21 @@ namespace WebsocMMM{
 		return true;
 	}
 
-	void WebsocMM::Run(){
+	void WebsocMM::WmmRun(){
 		if (!Connect()){
 			return;
 		}
 
 		if (!ShakeHands()){
 			return;
+		}
+
+		if (_tiktok_delegate){
+			std::thread td([this](){
+				_tiktok_delegate->Start();
+			});
+
+			td.detach();
 		}
 
 		//当前_rxbuf有效的长度
@@ -315,7 +324,7 @@ namespace WebsocMMM{
 			if (parse == RECV_PARSE_DONE){
 				delete[] _rxbuf;
 				valid_size = 0;
-				
+
 				_rxbuf = new unsigned char[DLF_MSGLEN]();
 				_rxbuf_length = DLF_MSGLEN;
 			}
@@ -345,7 +354,7 @@ namespace WebsocMMM{
 			ws.N0 = (data[1] & 0x7f);
 			ws.header_size = 2 + (ws.N0 == 126 ? 2 : 0) + (ws.N0 == 127 ? 8 : 0) + (ws.mask ? 4 : 0);
 			if (valid_size < ws.header_size) {
-				return RECV_PARSE_CONTINUE; /* Need: ws.header_size - rxbuf.size() */ 
+				return RECV_PARSE_CONTINUE; /* Need: ws.header_size - rxbuf.size() */
 			}
 
 			int i = 0;
@@ -424,11 +433,11 @@ namespace WebsocMMM{
 				}
 
 				_recv_data = tpbuf;
-				
+
 				//将掩码处理后的内容主体追加到recv_data,更新_recv_data_length长度
 				memcpy(_recv_data + _recv_data_length, _rxbuf + ws.header_size, (unsigned int)ws.N);
 				_recv_data_length += (unsigned int)ws.N;
-				
+
 				//重置_rxbuf
 				memset(_rxbuf, 0, _rxbuf_length);
 				valid_size = 0;
@@ -441,13 +450,14 @@ namespace WebsocMMM{
 				}
 			}
 			else if (ws.opcode == websoc_types::wmm_headers::PING) {
-
+				_tiktok_delegate->OnStatus(TikTok::PING);
 			}
 			else if (ws.opcode == websoc_types::wmm_headers::PONG) {
-				return RECV_PARSE_CLOSE;
+				_tiktok_delegate->OnStatus(TikTok::PONG);
 			}
 			else if (ws.opcode == websoc_types::wmm_headers::CLOSE) {
 				OnClose();
+				return RECV_PARSE_CLOSE;
 			}
 			else {
 				OnError(3, "ERROR: Got unexpected WebSocket message.Close socket.");
@@ -466,29 +476,13 @@ namespace WebsocMMM{
 		return RECV_PARSE_DONE;
 	}
 
-	void WebsocMM::Close(){
-		 uint8_t closeFrame[6] = { 0x88, 0x80, 0x00, 0x00, 0x00, 0x00 }; // last 4 bytes are a masking key
-		 std::vector<uint8_t> header(closeFrame, closeFrame + 6);
-		 _txbuf.insert(_txbuf.end(), header.begin(), header.end());
-		 int ret = 0;
-		 while (_txbuf.size()) {
-		 	ret = ::SSL_write(_ssl, (char*)&_txbuf[0], _txbuf.size());
-		 	if (ret > 0) {
-		 		break;
-		 	}
-		 	else if (ret <= 0) {
-		 		//LOG(ERROR) << "Connection error! Connection closed!";
-		 	}
+	void WebsocMM::WmmClose(){
+		uint8_t closeFrame[6] = { 0x88, 0x80, 0x00, 0x00, 0x00, 0x00 }; // last 4 bytes are a masking key
 
-		 }
-
-		 if (_txbuf.begin() != _txbuf.end() && ret <= (int)_txbuf.size()){
-		 	_txbuf.erase(_txbuf.begin(), _txbuf.begin() + ret);
-		 }
-		 std::vector<uint8_t>().swap(_txbuf);// free memory
+		SendData(websoc_types::wmm_headers::CLOSE, (char*)closeFrame, 6 * sizeof(uint8_t));
 	}
 
-	void WebsocMM::Exit(){
+	void WebsocMM::WmmExit(){
 		ReleaseSocket();
 	}
 
@@ -505,75 +499,89 @@ namespace WebsocMMM{
 		}
 	}
 
-	// bool WebsocMM::sendData(wsheader_type::opcode_type type, uint64_t message_size, std::string::iterator message_begin, std::string::iterator message_end){
+	bool WebsocMM::SendData(websoc_types::wmm_headers::opcode_type type, const char* message_begin, uint64_t message_size){
 
-	// 	const uint8_t masking_key[4] = { 0x12, 0x34, 0x56, 0x78 };
+		std::unique_lock<std::mutex> lock(_send_mutex);
 
-	// 	if (_readyState == readyStateValues::CLOSING || _readyState == readyStateValues::CLOSED) { return false; }
-	// 	std::vector<uint8_t> header;
-	// 	header.assign(2 + (message_size >= 126 ? 2 : 0) + (message_size >= 65536 ? 6 : 0) + (_usemask ? 4 : 0), 0);
-	// 	header[0] = 0x80 | type;
-	// 	if (message_size < 126) {
-	// 		header[1] = (message_size & 0xff) | (_usemask ? 0x80 : 0);
-	// 		if (_usemask) {
-	// 			header[2] = masking_key[0];
-	// 			header[3] = masking_key[1];
-	// 			header[4] = masking_key[2];
-	// 			header[5] = masking_key[3];
-	// 		}
-	// 	}
-	// 	else if (message_size < 65536) {
-	// 		header[1] = 126 | (_usemask ? 0x80 : 0);
-	// 		header[2] = (message_size >> 8) & 0xff;
-	// 		header[3] = (message_size >> 0) & 0xff;
-	// 		if (_usemask) {
-	// 			header[4] = masking_key[0];
-	// 			header[5] = masking_key[1];
-	// 			header[6] = masking_key[2];
-	// 			header[7] = masking_key[3];
-	// 		}
-	// 	}
-	// 	else { // TODO: run coverage testing here
-	// 		header[1] = 127 | (_usemask ? 0x80 : 0);
-	// 		header[2] = (message_size >> 56) & 0xff;
-	// 		header[3] = (message_size >> 48) & 0xff;
-	// 		header[4] = (message_size >> 40) & 0xff;
-	// 		header[5] = (message_size >> 32) & 0xff;
-	// 		header[6] = (message_size >> 24) & 0xff;
-	// 		header[7] = (message_size >> 16) & 0xff;
-	// 		header[8] = (message_size >> 8) & 0xff;
-	// 		header[9] = (message_size >> 0) & 0xff;
-	// 		if (_usemask) {
-	// 			header[10] = masking_key[0];
-	// 			header[11] = masking_key[1];
-	// 			header[12] = masking_key[2];
-	// 			header[13] = masking_key[3];
-	// 		}
-	// 	}
-	// 	// N.B. - txbuf will keep growing until it can be transmitted over the socket:
-	// 	_txbuf.insert(_txbuf.end(), header.begin(), header.end());
-	// 	_txbuf.insert(_txbuf.end(), message_begin, message_end);
-	// 	if (_usemask) {
-	// 		for (size_t i = 0; i != (size_t)message_size; ++i) { *(_txbuf.end() - message_size + i) ^= masking_key[i & 0x3]; }
-	// 	}
-	// 	while (_txbuf.size()) {
-	// 		int ret = ::SSL_write(_ssl, (char*)&_txbuf[0], _txbuf.size());
-	// 		if (ret > 0 && (ret == SSL_ERROR_WANT_WRITE)) {
-	// 			continue;
-	// 		}
-	// 		else if (ret <= 0) {
-	// 			_readyState = CLOSED;
-	// 			fputs(ret < 0 ? "Connection error!\n" : "Connection closed!\n", stderr);
-	// 			return false;
-	// 		}
-	// 		else {
-	// 			_txbuf.erase(_txbuf.begin(), _txbuf.begin() + ret);
-	// 		}
-	// 	}
-	// 	if (!_txbuf.size() && _readyState == CLOSING) {
-	// 		_readyState = CLOSED;
-	// 	}
-	// 	return true;
-	// }
+		const uint8_t masking_key[4] = { 0x12, 0x34, 0x56, 0x78 };
+
+		std::vector<uint8_t> header;
+		header.assign(2 + (message_size >= 126 ? 2 : 0) + (message_size >= 65536 ? 6 : 0) + (_usemask ? 4 : 0), 0);
+		header[0] = 0x80 | type;
+		if (message_size < 126) {
+			header[1] = (message_size & 0xff) | (_usemask ? 0x80 : 0);
+			if (_usemask) {
+				header[2] = masking_key[0];
+				header[3] = masking_key[1];
+				header[4] = masking_key[2];
+				header[5] = masking_key[3];
+			}
+		}
+		else if (message_size < 65536) {
+			header[1] = 126 | (_usemask ? 0x80 : 0);
+			header[2] = (message_size >> 8) & 0xff;
+			header[3] = (message_size >> 0) & 0xff;
+			if (_usemask) {
+				header[4] = masking_key[0];
+				header[5] = masking_key[1];
+				header[6] = masking_key[2];
+				header[7] = masking_key[3];
+			}
+		}
+		else { // TODO: run coverage testing here
+			header[1] = 127 | (_usemask ? 0x80 : 0);
+			header[2] = (message_size >> 56) & 0xff;
+			header[3] = (message_size >> 48) & 0xff;
+			header[4] = (message_size >> 40) & 0xff;
+			header[5] = (message_size >> 32) & 0xff;
+			header[6] = (message_size >> 24) & 0xff;
+			header[7] = (message_size >> 16) & 0xff;
+			header[8] = (message_size >> 8) & 0xff;
+			header[9] = (message_size >> 0) & 0xff;
+			if (_usemask) {
+				header[10] = masking_key[0];
+				header[11] = masking_key[1];
+				header[12] = masking_key[2];
+				header[13] = masking_key[3];
+			}
+		}
+
+		std::unique_ptr<char[]> datasend(new char[header.size() + (uint32_t)message_size]());
+		memcpy(datasend.get(), &header[0], header.size());
+
+
+		if (_usemask && message_begin != NULL) {
+			int offset = header.size();
+			memcpy(datasend.get() + offset, message_begin, (size_t)message_size);
+
+			for (size_t i = 0; i != (size_t)message_size; ++i) { *(datasend.get() + offset + i) ^= masking_key[i & 0x3]; }
+		}
+
+
+		while (message_size) {
+#ifdef WSS_SSL
+			int r = ::SSL_write(_ssl, datasend.get(), header.size() + (int)message_size);
+			if (r > 0 && (r == SSL_ERROR_WANT_WRITE)) {
+				continue;
+			}
+			else if (r <= 0) {
+				OnError(SSL_get_error(_ssl, r), "Write error.");
+				return false;
+			}
+#else
+			int r = ::send(_socketmm, datasend.get(), (int)header.size() + message_size, 0);
+			if (r <= 0) {
+				OnError(SOCKETMM_LASTERROR, "Write error.");
+				return false;
+			}
+#endif
+			else {
+				message_size -= (r - header.size());
+			}
+		};
+
+		return message_size == 0;
+
+	}
 
 }
