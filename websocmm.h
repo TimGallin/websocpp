@@ -19,26 +19,6 @@
 
 
 namespace WebsocMMM{
-	//------------V-Base TikTok----------------------------------
-	class TikTok
-	{
-	public:
-		enum Status
-		{
-			PING,
-			PONG
-		};
-
-		//TikTok();
-		virtual ~TikTok(){};
-
-		virtual void Start() = 0;
-
-		virtual void Stop() = 0;
-
-		virtual void OnStatus(Status status) = 0;
-	};
-
 	//------------WebsocMM----------------------------------
 
 	class WebsocMM
@@ -69,25 +49,23 @@ namespace WebsocMMM{
 		bool WmmInit(const std::string& uri);
 
 		/*
+		释放SSl环境，关闭Socket
+		*/
+		void WmmUnInit();
+
+		/*
 		Send Data
 		*/
 		bool SendData(websoc_types::wmm_headers::opcode_type type, const char* message_begin, uint64_t message_size);
 
-
-		/*
-		Set Timer
-		*/
-		void TimerDelegate(TikTok* delegate);
-
 		//-----------------Interface-------------------
 		virtual void OnSetup(std::vector<std::string>& wssheaders) = 0;
 
-		virtual void OnMessage(char* message, int length) = 0;
+		virtual void OnMessage(websoc_types::wmm_headers::opcode_type type, char* message, int length) = 0;
 		
 		virtual void OnClose() = 0;
 
 		virtual void OnError(int code, const std::string& message) = 0;
-
 	private:
 		/*
 		根据URI初始化请求头部
@@ -122,11 +100,6 @@ namespace WebsocMMM{
 #endif
 
 		/*
-		释放网络库环境
-		*/
-		void ReleaseSocket();
-
-		/*
 		parse respondse.
 		@param rxbuf : received data buffer
 		@param p : size of valid data in buffer 
@@ -146,8 +119,6 @@ namespace WebsocMMM{
 		unsigned int _recv_data_length;
 
 		std::mutex _send_mutex;
-
-		TikTok* _tiktok_delegate;
 
 		bool _usemask;
 

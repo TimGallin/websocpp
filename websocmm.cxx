@@ -1,9 +1,7 @@
 #include "websocmm.h"
-#include <process.h>
 #include <stdio.h>
 #include <sstream>
 #include <memory>
-#include <thread>
 
 #define DLF_MSGLEN 2048
 
@@ -25,13 +23,8 @@ namespace WebsocMMM{
 		_rxbuf(NULL),
 		_rxbuf_length(0),
 		_recv_data(NULL),
-		_recv_data_length(0),
-		_tiktok_delegate(NULL){
+		_recv_data_length(0){
 
-	}
-
-	void WebsocMM::TimerDelegate(TikTok* delegate){
-		_tiktok_delegate = delegate;
 	}
 
 	bool WebsocMM::WmmInit(const std::string& uri){
@@ -252,8 +245,9 @@ namespace WebsocMMM{
 		}
 
 		int status = 0;
-		_wss_headers.clear();
-		if (!websoc_types::parse_headers_respond(rxbuf.get(), length, status, _wss_headers)){
+		
+		std::vector<std::string> _wss_respond_headers;
+		if (!websoc_types::parse_headers_respond(rxbuf.get(), length, status, _wss_respond_headers)){
 			return false;
 		}
 
@@ -261,7 +255,7 @@ namespace WebsocMMM{
 			return false;
 		}
 
-		OnSetup(_wss_headers);
+		OnSetup(_wss_respond_headers);
 
 		return true;
 	}
@@ -273,14 +267,6 @@ namespace WebsocMMM{
 
 		if (!ShakeHands()){
 			return;
-		}
-
-		if (_tiktok_delegate){
-			std::thread td([this](){
-				_tiktok_delegate->Start();
-			});
-
-			td.detach();
 		}
 
 		//当前_rxbuf有效的长度
@@ -329,6 +315,7 @@ namespace WebsocMMM{
 				_rxbuf_length = DLF_MSGLEN;
 			}
 			else if (parse == RECV_PARSE_CLOSE || parse == RECV_PARSE_ERROR){
+
 				break;
 			}
 		}
@@ -338,7 +325,9 @@ namespace WebsocMMM{
 			_rxbuf_length = 0;
 		}
 
-		ReleaseSocket();
+		if (_socketmm != INVALID_SOCKETMM){
+			closesocket(_socketmm);
+		}
 	}
 
 	int WebsocMM::RecvHandle(unsigned char* rxbuf, unsigned int& valid_size){
@@ -443,20 +432,21 @@ namespace WebsocMMM{
 				valid_size = 0;
 
 				if (ws.fin) {
-					OnMessage((char*)(_recv_data), _recv_data_length);
+					OnMessage(ws.opcode, (char*)(_recv_data), _recv_data_length);
 				}
 				else{
 					return RECV_PARSE_CONTINUE;
 				}
 			}
 			else if (ws.opcode == websoc_types::wmm_headers::PING) {
-				_tiktok_delegate->OnStatus(TikTok::PING);
+				OnMessage(ws.opcode, NULL, 0);
 			}
 			else if (ws.opcode == websoc_types::wmm_headers::PONG) {
-				_tiktok_delegate->OnStatus(TikTok::PONG);
+				OnMessage(ws.opcode, NULL, 0);
 			}
 			else if (ws.opcode == websoc_types::wmm_headers::CLOSE) {
 				OnClose();
+
 				return RECV_PARSE_CLOSE;
 			}
 			else {
@@ -483,25 +473,32 @@ namespace WebsocMMM{
 	}
 
 	void WebsocMM::WmmExit(){
-		ReleaseSocket();
+		if (_socketmm != INVALID_SOCKETMM){
+			closesocket(_socketmm);
+			_socketmm = INVALID_SOCKETMM;
+		}
 	}
 
-	void WebsocMM::ReleaseSocket(){
+	void WebsocMM::WmmUnInit(){
 #ifdef WSS_SSL
 		if (_secure){
 			ReleaseSSL();
 		}
 #endif
-		WSACleanup();
 
 		if (_socketmm != INVALID_SOCKETMM){
 			closesocket(_socketmm);
 		}
+
+		WSACleanup();
 	}
 
 	bool WebsocMM::SendData(websoc_types::wmm_headers::opcode_type type, const char* message_begin, uint64_t message_size){
-
 		std::unique_lock<std::mutex> lock(_send_mutex);
+
+		if (_socketmm == INVALID_SOCKETMM){
+			return false;
+		}
 
 		const uint8_t masking_key[4] = { 0x12, 0x34, 0x56, 0x78 };
 
@@ -557,10 +554,10 @@ namespace WebsocMMM{
 			for (size_t i = 0; i != (size_t)message_size; ++i) { *(datasend.get() + offset + i) ^= masking_key[i & 0x3]; }
 		}
 
-
+		message_size += header.size();
 		while (message_size) {
 #ifdef WSS_SSL
-			int r = ::SSL_write(_ssl, datasend.get(), header.size() + (int)message_size);
+			int r = ::SSL_write(_ssl, datasend.get(), (int)message_size);
 			if (r > 0 && (r == SSL_ERROR_WANT_WRITE)) {
 				continue;
 			}
@@ -576,7 +573,7 @@ namespace WebsocMMM{
 			}
 #endif
 			else {
-				message_size -= (r - header.size());
+				message_size -= r;
 			}
 		};
 
