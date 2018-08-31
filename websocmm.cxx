@@ -173,7 +173,7 @@ namespace WebsocMMM{
 			}
 			OnError(SOCKETMM_LASTERROR, "WSA connect failed!");
 
-			closesocket(_socketmm);
+			SOCKETMM_CLOSE(_socketmm);
 			_socketmm = INVALID_SOCKET;
 		}
 		freeaddrinfo(result);
@@ -326,7 +326,7 @@ namespace WebsocMMM{
 		}
 
 		if (_socketmm != INVALID_SOCKETMM){
-			closesocket(_socketmm);
+			SOCKETMM_CLOSE(_socketmm);
 		}
 	}
 
@@ -474,7 +474,7 @@ namespace WebsocMMM{
 
 	void WebsocMM::WmmExit(){
 		if (_socketmm != INVALID_SOCKETMM){
-			closesocket(_socketmm);
+			SOCKETMM_CLOSE(_socketmm);
 			_socketmm = INVALID_SOCKETMM;
 		}
 	}
@@ -487,7 +487,7 @@ namespace WebsocMMM{
 #endif
 
 		if (_socketmm != INVALID_SOCKETMM){
-			closesocket(_socketmm);
+			SOCKETMM_CLOSE(_socketmm);
 		}
 
 		WSACleanup();

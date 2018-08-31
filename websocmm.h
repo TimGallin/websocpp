@@ -10,9 +10,9 @@
 #define WSS_SSL
 
 #ifdef WSS_SSL
-#include <openssl\ssl.h>
-#include <openssl\err.h>
-#include <openssl\bio.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#include <openssl/bio.h>
 #pragma warning(disable:4290)
 #pragma warning(disable:4482)
 #endif

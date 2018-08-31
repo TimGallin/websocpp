@@ -5,74 +5,74 @@ class TestWMM : public WebsocMMM::WebsocMM
 public:
 	TestWMM() :_loopctrl(NULL){
 
-		_hNotify = CreateEvent(NULL, TRUE, TRUE, L"5C6C8ECE-1002-46E5-B19D-95308563B2B4");
+	//	_hNotify = CreateEvent(NULL, TRUE, TRUE, L"5C6C8ECE-1002-46E5-B19D-95308563B2B4");
 	};
 	~TestWMM(){
-		if (_hNotify){
-			*_loopctrl = 0;
-			SetEvent(_hNotify);
-			CloseHandle(_hNotify);
+	//	if (_hNotify){
+	//		*_loopctrl = 0;
+	//		SetEvent(_hNotify);
+	//		CloseHandle(_hNotify);
 		}
 	};
 
 	virtual void OnMessage(websoc_types::wmm_headers::opcode_type type, char* message, int length) override{
 		if (type == websoc_types::wmm_headers::opcode_type::PONG){
-			if (_hNotify){
-				SetEvent(_hNotify);
-			}
+	//		if (_hNotify){
+	//			SetEvent(_hNotify);
+	//		}
 		}
 		else
 		{
 
 		}
 		int mm = 0;
-	}
+	};
 
 	virtual void OnClose() override{
 		int mm = 0;
-	}
+	};
 
 	virtual void OnError(int code, const std::string& message) override{
 		int mm = 0;
-	}
+	};
 
 	virtual void OnSetup(std::vector<std::string>& wssheaders) override{
-		_loopctrl = new int(1);
+	//	_loopctrl = new int(1);
 
 		//如果有定时器的话先开启定时器
-		std::thread td([this](){
-			HANDLE hNotify = OpenEvent(EVENT_ALL_ACCESS, NULL, L"5C6C8ECE-1002-46E5-B19D-95308563B2B4");
-			if (hNotify == NULL || _loopctrl == NULL){
-				return;
-			}
+	//	std::thread td([this](){
+	//		HANDLE hNotify = OpenEvent(EVENT_ALL_ACCESS, NULL, L"5C6C8ECE-1002-46E5-B19D-95308563B2B4");
+	//		if (hNotify == NULL || _loopctrl == NULL){
+	//			return;
+	//		}
 
-			DWORD wait = 0;
-			while (*_loopctrl){
-				SendData(websoc_types::wsheader_type::PING, NULL, 0);
+	//		DWORD wait = 0;
+	//		while (*_loopctrl){
+	//			SendData(websoc_types::wsheader_type::PING, NULL, 0);
 
-				Sleep(5000);
-				wait = WaitForSingleObject(hNotify, 0);
+	//			Sleep(5000);
+	//			wait = WaitForSingleObject(hNotify, 0);
 
 				//只有是超时退出情况下在外部停止websocket.由外部发起的Stop直接退出即可
-				if (wait == WAIT_TIMEOUT){
-					WmmExit();
+	//			if (wait == WAIT_TIMEOUT){
+	//				WmmExit();
 
-					break;
-				}
-			}
+	//				break;
+	//			}
+	//		}
 
-			if (hNotify){
-				CloseHandle(hNotify);
-			}
+	//		if (hNotify){
+	//			CloseHandle(hNotify);
+	//		}
 
-			delete _loopctrl;
-		});
+	//		delete _loopctrl;
+	//	});
 
-		td.detach();
-	}
+	//	td.detach();
+	};
 
 private:
-	HANDLE _hNotify;
+	//HANDLE _hNotify;
 	int* _loopctrl;
 };
 
@@ -86,7 +86,7 @@ int main(int argc, char* argv[]){
 
 	while (1){
 		tg.WmmRun();
-		Sleep(10000);
+		sleep(10000);
 		break;
 	}
 

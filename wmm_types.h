@@ -29,12 +29,21 @@
 /*Security Sprintf*/
 #define SSPRINTF sprintf_s
 
+/*Close Socket*/
+#define SOCKETMM_CLOSE closesocket;
+
 #else
+#include <sys/socket.h>
+#include <netdb.h>
+
+
 #define INVALID_SOCKETMM -1
 #define SPRINTFMM snprintf
-#define SOCKET_EAGAIN_EINPROGRESS EAGAIN
-#define SOCKET_EWOULDBLOCK EWOULDBLOCK
-#define SOCKET_ERROR WSAGetLastError()
+#define SOCKETMM_EAGAIN_EINPROGRESS EAGAIN
+#define SOCKETMM_EWOULDBLOCK EWOULDBLOCK
+#define SOCKETMM_LASTERROR errno
+#define SOCKETMM_ERROR -1
+#define SOCKETMM_CLOSE close;
 #endif
 
 namespace websoc_types
