@@ -1,2 +1,2 @@
 # websocpp
-c++ websocket 
+c++ websocket client on Linux or Windows.

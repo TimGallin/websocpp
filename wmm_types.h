@@ -35,15 +35,17 @@
 #else
 #include <sys/socket.h>
 #include <netdb.h>
-
+#include <sys/types.h>
+#include <unistd.h>
+#include <string.h>
 
 #define INVALID_SOCKETMM -1
-#define SPRINTFMM snprintf
+#define SSPRINTF snprintf
 #define SOCKETMM_EAGAIN_EINPROGRESS EAGAIN
 #define SOCKETMM_EWOULDBLOCK EWOULDBLOCK
 #define SOCKETMM_LASTERROR errno
 #define SOCKETMM_ERROR -1
-#define SOCKETMM_CLOSE close;
+#define SOCKETMM_CLOSE close
 #endif
 
 namespace websoc_types

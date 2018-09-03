@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <sstream>
 #include <memory>
+#include <string.h>
 
 #define DLF_MSGLEN 2048
 
@@ -81,6 +82,7 @@ namespace WebsocMMM{
 	}
 
 	bool WebsocMM::InitSocket(){
+#ifdef _WIN32
 		INT rc = 0;
 		WSADATA _wsaData;
 		rc = WSAStartup(MAKEWORD(2, 2), &_wsaData);
@@ -88,6 +90,7 @@ namespace WebsocMMM{
 			OnError(SOCKETMM_LASTERROR, "Initial WSAStartup failed!");
 			return false;
 		}
+#endif
 
 #ifdef WSS_SSL
 		if (_secure && !InitSSL()){
@@ -174,7 +177,7 @@ namespace WebsocMMM{
 			OnError(SOCKETMM_LASTERROR, "WSA connect failed!");
 
 			SOCKETMM_CLOSE(_socketmm);
-			_socketmm = INVALID_SOCKET;
+			_socketmm = INVALID_SOCKETMM;
 		}
 		freeaddrinfo(result);
 
@@ -288,13 +291,13 @@ namespace WebsocMMM{
 			else
 			{
 				r = recv(_socketmm, (char*)_rxbuf + valid_size, _rxbuf_length - valid_size, 0);
-				if (r == 0 && SOCKETMM_LASTERROR == SOCKET_IOPENDING){
+				if (r == 0 /*&& SOCKETMM_LASTERROR == SOCKET_IOPENDING*/){
 					continue;
 				}
 			}
 #else
 			int r = recv(_socketmm, (char*)_rxbuf + valid_size, _rxbuf_length - valid_size, 0);
-			if (r == 0 && SOCKETMM_LASTERROR == SOCKET_IOPENDING){
+			if (r == 0 /*&& SOCKETMM_LASTERROR == SOCKET_IOPENDING*/){
 				continue;
 			}
 #endif
@@ -489,8 +492,9 @@ namespace WebsocMMM{
 		if (_socketmm != INVALID_SOCKETMM){
 			SOCKETMM_CLOSE(_socketmm);
 		}
-
+#ifdef _WIN32
 		WSACleanup();
+#endif
 	}
 
 	bool WebsocMM::SendData(websoc_types::wmm_headers::opcode_type type, const char* message_begin, uint64_t message_size){
